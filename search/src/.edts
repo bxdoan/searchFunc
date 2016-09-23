@@ -1,0 +1,4 @@
+:name "search"
+:node-sname "search-edts"
+:app-include-dirs '("src")
+:lib-dirs '("mochiweb/ebin" "mochiweb_xpath/ebin" "search/src") 
