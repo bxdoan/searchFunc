@@ -1,9 +1,9 @@
 -module(search).
 -author('DoanTalent').
--export([get_html/0]).   
+-export([get/0]).   
 -compile(export_all).
 
-get_html()->
+get()->
     {ok, Temp} = file:open("data.db",write),    
     Bd = case httpc:request("http://erlang.org/doc/man/lists.html") of
                {ok, {{_, 200, _}, _, Body}} ->
@@ -14,7 +14,6 @@ get_html()->
     Parse_body = mochiweb_xpath:execute("//div/div/div/p",
                                         mochiweb_html:parse(Bd)),
     P = parse_func(Parse_body),
-    %% io:format("Length: ~p~n",[length(P)]),
     io:format(Temp,"~p",[P]), 
     ok.
 
@@ -42,7 +41,7 @@ parse_func([Head|Tail])->
     end.
     
 %% -----------------------------------------------------------------------------
-%% analyse
+%% analyse_func use for parse from tuple of Func to value. Then we can search. 
 %% -spec analyse_func(Func) ->  [Name, Args, Type] when
 %%       Func :: tuple()
 %%       Name :: binary(atom())
@@ -58,32 +57,35 @@ analyse_func(Func)->
                _ ->
                    B  
                end,
-    Args_raw = mochiweb_xpath:execute("/p/span", Func), 
-    Args = parse_in_out(analyse_type(Args_raw)),
+    %% Args_raw is list of prototype 
+    Args_raw = return_value3(mochiweb_xpath:execute("/p/span", Func)), 
+    {In,Out}  = parse_in_out(Args_raw),
     Type_raw = mochiweb_xpath:execute("/p/div/div/span", Func),
     Type = case Type_raw of
                [D] ->
                    element(3,D);
                _ ->
-                   analyse_type(Type_raw)
+                   return_value3(Type_raw)
            end,
-    {Name, Args, Type}.
+    Input = nonDuplicate_list(find_type(In,Type)),
+    Output = nonDuplicate_list(find_type(Out,Type)),
+    {Name, Input, Output,Type}.
 
 %% -----------------------------------------------------------------------------
-%% analyse
-%% -spec analyse_type(Type) ->  Type
+%% return_value3
+%% -spec return_value3(Type) ->  Type
 %%       Type :: tuple()
 %%       Type :: [T]
 %%                                              
 %% -----------------------------------------------------------------------------
 
-analyse_type([]) ->
+return_value3([]) ->
     [];
-analyse_type([Head|Tail]) ->
+return_value3([Head|Tail]) ->
     case element(3,Head) of 
         [Value] -> 
-            [Value | analyse_type(Tail)];
-        [] ->   analyse_type(Tail)   
+            [Value | return_value3(Tail)];
+        [] ->   return_value3(Tail)   
     end.
       
 %% -----------------------------------------------------------------------------
@@ -161,21 +163,57 @@ define_output(Name)->
 
 %% -----------------------------------------------------------------------------
 %% -spec parse_in_out(Prot) ->  {Input,Output} when
-%%       Prot :: prototype(), 
+%%       Prot :: [prototype()], 
 %%       Input :: ListOfLists|[]
-%%       Output :: output_of_func()|[]
+%%       Output :: [output_of_func()]|[]
 %% 
 %% -----------------------------------------------------------------------------
 
-parse_in_out(Prot) ->
+parse_in_out([])->
+    {[],[]};
+parse_in_out([Prot|Tail]) ->
     RE = ".*\\((.*?)\\) -> (.*?)",
     Split = re:split(Prot,RE),
-    {re:split(lists:nth(2,Split), ", "),lists:nth(4,Split)}.
+    Output = lists:nth(4,Split),
+    Input = re:split(lists:nth(2,Split), ", "),
+    {In,Out} = parse_in_out(Tail),     
+    {Input++In,[Output]++Out}.
 
-doan()->
-    Nameargs = <<"List2">>,
-    Type1 =  <<"List1 = List2 = [T]">>,
-    Type2 =  <<"Pred = fun((Elem :: T) -> boolean())">>,            
-    binary:match(Type2,Nameargs).
-    
+%% -----------------------------------------------------------------------------
+%% find type of data for input or output
+%% -spec find_type(Name,Type) ->  {Input,Output} when
+%%       Name :: [T], 
+%%       Input :: [List]|[]
+%%       Output :: [List]|[]
+%% 
+%% -----------------------------------------------------------------------------
 
+
+find_type([],_)->
+    [];
+find_type([Head|Tail],Type)->
+    [return_type(Head,Type)|find_type(Tail,Type)].
+
+return_type(_,[])->
+    [];
+return_type(Nameargs,[Type|TailType])->
+    case binary:match(Type,Nameargs) of
+	nomatch ->
+	    return_type(Nameargs,TailType);
+	_ ->
+	    Split = case A = re:split(Type,".*? = .*?") of
+			[] ->
+			    [nok, errror];
+			_ ->
+			    A
+		    end,
+	    lists:nth(1,lists:reverse(Split))
+    end.
+
+%% -----------------------------------------------------------------------------
+%% remove duplicate
+%% -----------------------------------------------------------------------------
+
+nonDuplicate_list(List) ->
+    Set = sets:from_list(List),
+    sets:to_list(Set).
