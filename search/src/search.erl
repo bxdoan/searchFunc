@@ -3,6 +3,82 @@
 -export([get/0]).   
 -compile(export_all).
 
+
+%% -----------------------------------------------------------------------------
+%% Define
+%% -----------------------------------------------------------------------------
+
+-define(APPS,"http://erlang.org/doc/applications.html").
+-define(LISTS,"http://erlang.org/doc/man/lists.html").
+-define(DOC,"http://erlang.org/doc/").
+
+%% -----------------------------------------------------------------------------
+%% Function
+%% -----------------------------------------------------------------------------
+
+apps()->
+    {ok, Temp} = file:open("data.txt",write), 
+    Bd = get_body(?APPS),
+    Parse_body = mochiweb_xpath:execute("/html/body/center/table/tr/td/table/tr",
+                                        mochiweb_html:parse(Bd)),
+    io:format(Temp,"~p~n",[parse_apps_name(Parse_body)]),
+    ok.  
+
+apps(Name) ->   
+    {ok, Temp} = file:open("data.txt",write), 
+    Bd = get_body(?APPS),    
+    UrlAll = nonDuplicate_list(mochiweb_xpath:execute("/html/body/center/table/tr/td/table/tr/td/a/@href",
+                                               mochiweb_html:parse(Bd))),
+
+    Url = lookup_url(UrlAll, binary:list_to_bin(Name)),
+    Bd2 = get_body(?DOC++binary:bin_to_list(Url)),
+    Parse_body = mochiweb_xpath:execute("/html/body/div/div/div/ul/li/@title",
+                                        mochiweb_html:parse(Bd2)),
+    io:format(Temp,"~p~n",[Parse_body]),
+    ok.
+
+apps(Name, Module) ->
+    {ok, Temp} = file:open("data.txt",write), 
+    Bd = get_body(?APPS),    
+    UrlAll = nonDuplicate_list(mochiweb_xpath:execute("/html/body/center/table/tr/td/table/tr/td/a/@href",
+                                               mochiweb_html:parse(Bd))),
+
+    Url = lookup_url(UrlAll, binary:list_to_bin(Name)),
+    Bd2 = get_body(?DOC++binary:bin_to_list(Url)),
+    Parse_body = mochiweb_xpath:execute("/html/body/div/div/div/ul/li",
+                                        mochiweb_html:parse(Bd2)),
+    Mod = lookup_module(Parse_body,Module),
+    A = mochiweb_xpath:execute("/ul/li/@title",lists:nth(2,element(3,Mod))),
+    io:format("~p~n",[A]),
+    ok.
+
+lookup_module([], _)->
+    nomatch;
+lookup_module([Head|Tail], Name) ->
+    [Title] = mochiweb_xpath:execute("/li/@title", Head),                                             
+    case binary:match(Title, Name) of 
+        nomatch -> 
+            lookup_module(Tail, Name);
+        _  ->
+            Head
+    end.
+
+lookup_url([],_) ->
+    nomatch;
+lookup_url([Head|Tail], Name) ->
+    case binary:match(Head, Name) of 
+        nomatch -> 
+            lookup_url(Tail, Name);
+        _  ->
+            Head
+    end.
+
+parse_apps_name([])->
+    [];
+parse_apps_name([Name|Tail])->
+    A = return_value3(mochiweb_xpath:execute("/tr/td/a", Name)), 
+    [A|parse_apps_name(Tail)].
+
 get()->
     {ok, Temp} = file:open("data.db",write),    
     Bd = case httpc:request("http://erlang.org/doc/man/lists.html") of
@@ -217,3 +293,11 @@ return_type(Nameargs,[Type|TailType])->
 nonDuplicate_list(List) ->
     Set = sets:from_list(List),
     sets:to_list(Set).
+
+get_body(Url) ->
+    case httpc:request(Url) of
+        {ok, {{_, 200, _}, _, Body}} ->
+            Body;
+        {error, Reason} ->
+            Reason
+    end.
