@@ -1,1 +1,13 @@
--record(A,{a,b}).
+-record(app,{name,
+              version,
+              des
+             }).
+-record(mod,{app,
+             name,             
+             des
+            }).
+-record(func,{mod,
+              name,
+              arg,
+              des
+             })

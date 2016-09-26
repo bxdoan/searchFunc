@@ -1,11 +1,21 @@
 -module(search).
 -author('DoanTalent').
--export([get/0]).   
--compile(export_all).
 
+%% -----------------------------------------------------------------------------
+%% EXPORT
+%% -----------------------------------------------------------------------------
+
+-export([get/0,apps/0]).   
+-compile(export_all).
 
 %% -----------------------------------------------------------------------------
 %% Define
+%% -----------------------------------------------------------------------------
+
+-include("../inc/search.hrl").
+
+%% -----------------------------------------------------------------------------
+%% DEFINE
 %% -----------------------------------------------------------------------------
 
 -define(APPS,"http://erlang.org/doc/applications.html").
@@ -16,11 +26,19 @@
 %% Function
 %% -----------------------------------------------------------------------------
 
+init() ->
+    mnesia:create_table(app,
+                        [{attributes, record_info(fields, app)}]),
+    mnesia:create_table(mod,
+                        [{attributes, record_info(fields, mod)}]),
+    mnesia:create_table(func,
+                        [{attributes, record_info(fields, func)}]).
+
 apps()->
     {ok, Temp} = file:open("data.txt",write), 
     Bd = get_body(?APPS),
     Parse_body = mochiweb_xpath:execute("/html/body/center/table/tr/td/table/tr",
-                                        mochiweb_html:parse(Bd)),
+                                        Bd),
     io:format(Temp,"~p~n",[parse_apps_name(Parse_body)]),
     ok.  
 
@@ -28,7 +46,7 @@ apps(Name) ->
     {ok, Temp} = file:open("data.txt",write), 
     Bd = get_body(?APPS),    
     UrlAll = nonDuplicate_list(mochiweb_xpath:execute("/html/body/center/table/tr/td/table/tr/td/a/@href",
-                                               mochiweb_html:parse(Bd))),
+                                               Bd)),
 
     Url = lookup_url(UrlAll, binary:list_to_bin(Name)),
     Bd2 = get_body(?DOC++binary:bin_to_list(Url)),
@@ -38,10 +56,10 @@ apps(Name) ->
     ok.
 
 apps(Name, Module) ->
-    {ok, Temp} = file:open("data.txt",write), 
+    %% {ok, Temp} = file:open("data.txt",write), 
     Bd = get_body(?APPS),    
     UrlAll = nonDuplicate_list(mochiweb_xpath:execute("/html/body/center/table/tr/td/table/tr/td/a/@href",
-                                               mochiweb_html:parse(Bd))),
+                                               Bd)),
 
     Url = lookup_url(UrlAll, binary:list_to_bin(Name)),
     Bd2 = get_body(?DOC++binary:bin_to_list(Url)),
@@ -79,16 +97,14 @@ parse_apps_name([Name|Tail])->
     A = return_value3(mochiweb_xpath:execute("/tr/td/a", Name)), 
     [A|parse_apps_name(Tail)].
 
+%% -----------------------------------------------------------------------------
+%% get data for func search
+%% -----------------------------------------------------------------------------
+
 get()->
     {ok, Temp} = file:open("data.db",write),    
-    Bd = case httpc:request("http://erlang.org/doc/man/lists.html") of
-               {ok, {{_, 200, _}, _, Body}} ->
-                   Body;
-               {error, Reason} ->
-                   Reason
-           end,
-    Parse_body = mochiweb_xpath:execute("//div/div/div/p",
-                                        mochiweb_html:parse(Bd)),
+    Bd = get_body(?LISTS),
+    Parse_body = mochiweb_xpath:execute("/div/div/div/p", Bd),
     P = parse_func(Parse_body),
     io:format(Temp,"~p",[P]), 
     ok.
@@ -294,10 +310,15 @@ nonDuplicate_list(List) ->
     Set = sets:from_list(List),
     sets:to_list(Set).
 
+%% -----------------------------------------------------------------------------
+%% get Body parsed from html
+%% -----------------------------------------------------------------------------
+
 get_body(Url) ->
-    case httpc:request(Url) of
+    Bd = case httpc:request(Url) of
         {ok, {{_, 200, _}, _, Body}} ->
             Body;
         {error, Reason} ->
             Reason
-    end.
+    end,
+    mochiweb_html:parse(Bd).
