@@ -21,12 +21,15 @@
 -define(APPS,"http://erlang.org/doc/applications.html").
 -define(LISTS,"http://erlang.org/doc/man/lists.html").
 -define(DOC,"http://erlang.org/doc/").
+-define(MAN,"http://erlang.org/doc/man/").
 
 %% -----------------------------------------------------------------------------
 %% Function
 %% -----------------------------------------------------------------------------
 
 init() ->
+    mnesia:create_schema([node()]),
+    mnesia:start(),
     mnesia:create_table(app,
                         [{attributes, record_info(fields, app)}]),
     mnesia:create_table(mod,
@@ -92,7 +95,7 @@ select_app(Arg) when is_atom(Arg) ->
             mnesia:read({app, Name})
         end,
     {atomic, [Row]}=mnesia:transaction(Fun),
-    io:format(" ~p ~p ~n ~p ~n ", [Row#app.name, Row#app.version, Row#app.des] ).
+    io:format("~s ~s ~n ~s ~n ", [Row#app.name, Row#app.version, Row#app.des] ).
 
 %% -----------------------------------------------------------------------------
 %% SAVE MODULE
@@ -117,16 +120,30 @@ apps_mod()  ->
                                         Bd),
     UrlAll = nonDuplicate_list(mochiweb_xpath:execute("/html/body/center/table/tr/td/table/tr/td/a/@href",Bd)),
     Listapp = return_list_app(Parse_body),
-    %% Save = save_all_mod(Listapp,UrlAll),
-    io:format(Temp,"~p~n~p~n",[Listapp,UrlAll]),
+    Save = save_all_mod(Listapp,UrlAll),
+    %% Listdesmod = return_list_des_mod(ModAll),
+    io:format(Temp,"~p~n",[Save]),
     {ok,saved}.
+
+return_list_des_mod([])->
+    [];
+return_list_des_mod([Name|Tail]) ->
+    case binary:match(Name, <<"App">>) of
+	nomatch ->
+	    Bd = get_body(?MAN++binary:bin_to_list(Name)++".html"),
+	    Des = element(3, lists:nth(1,mochiweb_xpath:execute("/html/body/div/div/div/div/p", Bd))),
+	    [Des|return_list_des_mod(Tail)];
+	_ ->
+	    return_list_des_mod(Tail)
+    end.
 
 doan()->
     {ok, Temp} = file:open("data.txt",write), 
-    Bd = get_body(?DOC++binary:bin_to_list(<<"apps/eldap/index.html">>)),
+    %% Bd = get_body(?DOC++"eldap.html"),
     Bd2 = get_body("http://erlang.org/doc/man/eldap.html"),
-    D = mochiweb_xpath:execute("/html/body/div/div/div/ul/li", Bd),
-    io:format(Temp,"~p~n",[D]),
+    D = mochiweb_xpath:execute("/html/body/div/div/div/div/p", Bd2),
+    M = element(3, lists:nth(1,D)),
+    io:format(Temp,"~p~n",[M]),
     {ok,saved}.
 
 return_list_app([])->
@@ -151,14 +168,21 @@ save_all_mod([Head|Tail], UrlAll) ->
     Bd = get_body(?DOC++binary:bin_to_list(Url)),
     Listmodule = mochiweb_xpath:execute("/html/body/div/div/div/ul/li/@title", Bd),
     save_mod(Listmodule, Head),
-    save_all_mod(Tail,UrlAll).
+    [Listmodule|save_all_mod(Tail,UrlAll)].
     
 save_mod([],_)->
     [];
 save_mod([Head|Tail],Name) ->
+    Des = case binary:match(clean(Head), <<"App">>) of
+    	      nomatch ->
+    		  Bd = get_body(?MAN++binary:bin_to_list(clean(Head))++".html"),
+    		  element(3, lists:nth(1,mochiweb_xpath:execute("/html/body/div/div/div/div/p", Bd)));
+    	      _ ->
+    		  []
+    	  end,
     Mod = #mod{app = clean_des(Name),
                name = clean_des(Head),
-               des = []},
+               des = Des},
     insert(Mod),
     save_mod(Tail,Name).
 
@@ -182,7 +206,7 @@ select_mod(Arg) when is_atom(Arg) ->
             mnesia:read({mod, Name})
         end,
     {atomic, [Row]}=mnesia:transaction(Fun),
-    io:format(" ~p ~p ~n ~p ~n ",[Row#mod.name, Row#mod.app , Row#mod.des]).
+    io:format(" ~s ~s ~n ~s ~n ",[Row#mod.name, Row#mod.app , Row#mod.des]).
 
 %% apps(Name, Module) ->
 %%     %% {ok, Temp} = file:open("data.txt",write), 
@@ -417,7 +441,6 @@ parse_in_out([Prot|Tail]) ->
 %% 
 %% -----------------------------------------------------------------------------
 
-
 find_type([],_)->
     [];
 find_type([Head|Tail],Type)->
@@ -444,8 +467,7 @@ return_type(Nameargs,[Type|TailType])->
 %% -----------------------------------------------------------------------------
 
 nonDuplicate_list(List) ->
-    Set = sets:from_list(List),
-    sets:to_list(Set).
+    sets:to_list(sets:from_list(List)).
 
 %% -----------------------------------------------------------------------------
 %% get Body parsed from html
@@ -463,20 +485,33 @@ get_body(Url) ->
 clean_des(Des) ->
     A = re:replace(Des, "(^\\s+)|(\\s+$)", "", [global,{return,list}]),
     re:replace(A, "\n", "\\ ", [global,{return,list}]).
-    
+clean(Arg)->    
+    A = re:replace(Arg, "(^\\s+)|(\\s+$)", "", [global,{return,binary}]),
+    re:replace(A, "\n", "\\ ", [global,{return,binary}]).
+
 loop_print_app([])->
     [];
 loop_print_app([Head|Tail]) ->
-    io:format("~p~n~p~n~n", [Head#app.name, Head#app.des]),
+    io:format("~s~n~s~n~n", [Head#app.name, Head#app.des]),
     loop_print_app(Tail).
 
 loop_print_mod([])->
     [];
 loop_print_mod([Head|Tail]) ->
-    io:format("~p~n~p~n~n", [Head#mod.name, Head#mod.app]),
+    io:format("~s~n~s~n~n", [Head#mod.name, Head#mod.app]),
     loop_print_mod(Tail).
 
-
+select_search(Word) -> 
+    mnesia:transaction( 
+    fun() ->
+         qlc:eval( qlc:q(
+              [ {F0,F1,F2,F3} || 
+                   {F0,F1,F2,F3} <- 
+                        mnesia:table(mod),
+                        (string:str(F2, Word)>0) or  
+                        (string:str(F3, Word)>0)
+               ])) 
+    end ).
 
 
 
