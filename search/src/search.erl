@@ -2,17 +2,17 @@
 -author('DoanTalent').
 
 %% -----------------------------------------------------------------------------
+%% INCLUDE
+%% -----------------------------------------------------------------------------
+-include_lib("stdlib/include/qlc.hrl").
+-include("../inc/search.hrl").
+
+%% -----------------------------------------------------------------------------
 %% EXPORT
 %% -----------------------------------------------------------------------------
 
 -export([get/0,apps/0]).   
 -compile(export_all).
-
-%% -----------------------------------------------------------------------------
-%% Define
-%% -----------------------------------------------------------------------------
-
--include("../inc/search.hrl").
 
 %% -----------------------------------------------------------------------------
 %% DEFINE
@@ -30,45 +30,174 @@ init() ->
     mnesia:create_table(app,
                         [{attributes, record_info(fields, app)}]),
     mnesia:create_table(mod,
-                        [{attributes, record_info(fields, mod)}]),
+                        [{attributes, record_info(fields, mod)},{type, bag}]),
     mnesia:create_table(func,
-                        [{attributes, record_info(fields, func)}]).
+                        [{attributes, record_info(fields, func)},{type, bag}]).
 
+insert(Name) ->
+    mnesia:transaction(fun() ->
+                               mnesia:write(Name)
+                       end).
+%% -----------------------------------------------------------------------------
+%% SAVE APPLICATION
+%% -----------------------------------------------------------------------------
+
+%% apps()->
+%%     {ok, Temp} = file:open("data.txt",write), 
+%%     Bd = get_body(?APPS),
+%%     Parse_body = mochiweb_xpath:execute("/html/body/center/table/tr/td/table/tr",
+%%                                         Bd),
+%%     io:format(Temp,"~p~n",[parse_apps_name(Parse_body)]),
+%%     ok.  
 apps()->
+    %% {ok, Temp} = file:open("data.txt",write), 
+    Bd = get_body(?APPS),
+    Parse_body = mochiweb_xpath:execute("/html/body/center/table/tr",
+                                        Bd),
+    Data = save_app(Parse_body),
+    io:format("~p~n",[Data]).
+
+save_app([])->
+    [];
+save_app([Head|Tail]) ->
+    case mochiweb_xpath:execute("/tr/@class", Head) of
+        [<<"app">>] ->
+            [Name,Version] = return_value3(mochiweb_xpath:execute("/tr/td/table/tr/td/a", Head)),
+            [Des] = element(3,lists:nth(2,mochiweb_xpath:execute("/tr/td", Head))),
+            App = #app{name = binary:bin_to_list(Name),
+                     version = binary:bin_to_list(Version),
+                     des = clean_des(Des)},
+            insert(App),
+            save_app(Tail);
+        _ ->
+            save_app(Tail)
+    end.
+%% -----------------------------------------------------------------------------
+%% SELECT APPS
+%% -----------------------------------------------------------------------------
+
+select_app() ->
+    {atomic, Row} = mnesia:transaction( 
+                      fun() ->
+                                 qlc:eval( qlc:q(
+                                             [ X || X <- mnesia:table(app) ])) 
+                      end 
+                     ),
+    loop_print_app(Row). 
+
+select_app(Arg) when is_atom(Arg) ->
+    Name = atom_to_list(Arg),
+    Fun = 
+        fun() ->
+            mnesia:read({app, Name})
+        end,
+    {atomic, [Row]}=mnesia:transaction(Fun),
+    io:format(" ~p ~p ~n ~p ~n ", [Row#app.name, Row#app.version, Row#app.des] ).
+
+%% -----------------------------------------------------------------------------
+%% SAVE MODULE
+%% -----------------------------------------------------------------------------
+
+%% apps(Name) ->   
+%%     {ok, Temp} = file:open("data.txt",write), 
+%%     Bd = get_body(?APPS),    
+%%     UrlAll = nonDuplicate_list(mochiweb_xpath:execute("/html/body/center/table/tr/td/table/tr/td/a/@href",
+%%                                                Bd)),
+%%     Url = lookup_url(UrlAll, binary:list_to_bin(Name)),
+%%     Bd2 = get_body(?DOC++binary:bin_to_list(Url)),
+%%     Parse_body = mochiweb_xpath:execute("/html/body/div/div/div/ul/li/@title",
+%%                                         mochiweb_html:parse(Bd2)),
+%%     io:format(Temp,"~p~n",[Parse_body]),
+%%     ok.
+
+apps_mod()  ->
     {ok, Temp} = file:open("data.txt",write), 
     Bd = get_body(?APPS),
-    Parse_body = mochiweb_xpath:execute("/html/body/center/table/tr/td/table/tr",
+    Parse_body = mochiweb_xpath:execute("/html/body/center/table/tr",
                                         Bd),
-    io:format(Temp,"~p~n",[parse_apps_name(Parse_body)]),
-    ok.  
+    UrlAll = nonDuplicate_list(mochiweb_xpath:execute("/html/body/center/table/tr/td/table/tr/td/a/@href",Bd)),
+    Listapp = return_list_app(Parse_body),
+    %% Save = save_all_mod(Listapp,UrlAll),
+    io:format(Temp,"~p~n~p~n",[Listapp,UrlAll]),
+    {ok,saved}.
 
-apps(Name) ->   
+doan()->
     {ok, Temp} = file:open("data.txt",write), 
-    Bd = get_body(?APPS),    
-    UrlAll = nonDuplicate_list(mochiweb_xpath:execute("/html/body/center/table/tr/td/table/tr/td/a/@href",
-                                               Bd)),
+    Bd = get_body(?DOC++binary:bin_to_list(<<"apps/eldap/index.html">>)),
+    Bd2 = get_body("http://erlang.org/doc/man/eldap.html"),
+    D = mochiweb_xpath:execute("/html/body/div/div/div/ul/li", Bd),
+    io:format(Temp,"~p~n",[D]),
+    {ok,saved}.
 
-    Url = lookup_url(UrlAll, binary:list_to_bin(Name)),
-    Bd2 = get_body(?DOC++binary:bin_to_list(Url)),
-    Parse_body = mochiweb_xpath:execute("/html/body/div/div/div/ul/li/@title",
-                                        mochiweb_html:parse(Bd2)),
-    io:format(Temp,"~p~n",[Parse_body]),
-    ok.
+return_list_app([])->
+    [];
+return_list_app([Head|Tail]) ->
+    case mochiweb_xpath:execute("/tr/@class", Head) of
+        [<<"app">>] ->
+            [Name,_] = return_value3(mochiweb_xpath:execute("/tr/td/table/tr/td/a", Head)),
+            [Name|return_list_app(Tail)];
+        _ ->
+            return_list_app(Tail)
+    end.
 
-apps(Name, Module) ->
-    %% {ok, Temp} = file:open("data.txt",write), 
-    Bd = get_body(?APPS),    
-    UrlAll = nonDuplicate_list(mochiweb_xpath:execute("/html/body/center/table/tr/td/table/tr/td/a/@href",
-                                               Bd)),
+%% -----------------------------------------------------------------------------
+%% SAVE MODULE FOR EACH APPLICATION
+%% -----------------------------------------------------------------------------
 
-    Url = lookup_url(UrlAll, binary:list_to_bin(Name)),
-    Bd2 = get_body(?DOC++binary:bin_to_list(Url)),
-    Parse_body = mochiweb_xpath:execute("/html/body/div/div/div/ul/li",
-                                        mochiweb_html:parse(Bd2)),
-    Mod = lookup_module(Parse_body,Module),
-    A = mochiweb_xpath:execute("/ul/li/@title",lists:nth(2,element(3,Mod))),
-    io:format("~p~n",[A]),
-    ok.
+save_all_mod([],_)->
+    [];
+save_all_mod([Head|Tail], UrlAll) ->
+    Url = lookup_url(UrlAll, Head),
+    Bd = get_body(?DOC++binary:bin_to_list(Url)),
+    Listmodule = mochiweb_xpath:execute("/html/body/div/div/div/ul/li/@title", Bd),
+    save_mod(Listmodule, Head),
+    save_all_mod(Tail,UrlAll).
+    
+save_mod([],_)->
+    [];
+save_mod([Head|Tail],Name) ->
+    Mod = #mod{app = clean_des(Name),
+               name = clean_des(Head),
+               des = []},
+    insert(Mod),
+    save_mod(Tail,Name).
+
+%% -----------------------------------------------------------------------------
+%% SELECT MODULE
+%% -----------------------------------------------------------------------------
+    
+select_mod() ->
+    {atomic, Row} = mnesia:transaction( 
+                      fun() ->
+                                 qlc:eval( qlc:q(
+                                             [ X || X <- mnesia:table(mod) ])) 
+                      end 
+                     ),
+    loop_print_mod(Row). 
+
+select_mod(Arg) when is_atom(Arg) ->
+    Name = atom_to_list(Arg),
+    Fun = 
+        fun() ->
+            mnesia:read({mod, Name})
+        end,
+    {atomic, [Row]}=mnesia:transaction(Fun),
+    io:format(" ~p ~p ~n ~p ~n ",[Row#mod.name, Row#mod.app , Row#mod.des]).
+
+%% apps(Name, Module) ->
+%%     %% {ok, Temp} = file:open("data.txt",write), 
+%%     Bd = get_body(?APPS),    
+%%     UrlAll = nonDuplicate_list(mochiweb_xpath:execute("/html/body/center/table/tr/td/table/tr/td/a/@href",
+%%                                                Bd)),
+
+%%     Url = lookup_url(UrlAll, binary:list_to_bin(Name)),
+%%     Bd2 = get_body(?DOC++binary:bin_to_list(Url)),
+%%     Parse_body = mochiweb_xpath:execute("/html/body/div/div/div/ul/li",
+%%                                         mochiweb_html:parse(Bd2)),
+%%     Mod = lookup_module(Parse_body,Module),
+%%     A = mochiweb_xpath:execute("/ul/li/@title",lists:nth(2,element(3,Mod))),
+%%     io:format("~p~n",[A]),
+%%     ok.
 
 lookup_module([], _)->
     nomatch;
@@ -90,6 +219,14 @@ lookup_url([Head|Tail], Name) ->
         _  ->
             Head
     end.
+
+
+%% -----------------------------------------------------------------------------
+%% return Name and Version of app
+%% -----------------------------------------------------------------------------
+
+parse_app_name(Name)->
+    return_value3(mochiweb_xpath:execute("/tr/td/a", Name)).
 
 parse_apps_name([])->
     [];
@@ -322,3 +459,29 @@ get_body(Url) ->
             Reason
     end,
     mochiweb_html:parse(Bd).
+
+clean_des(Des) ->
+    A = re:replace(Des, "(^\\s+)|(\\s+$)", "", [global,{return,list}]),
+    re:replace(A, "\n", "\\ ", [global,{return,list}]).
+    
+loop_print_app([])->
+    [];
+loop_print_app([Head|Tail]) ->
+    io:format("~p~n~p~n~n", [Head#app.name, Head#app.des]),
+    loop_print_app(Tail).
+
+loop_print_mod([])->
+    [];
+loop_print_mod([Head|Tail]) ->
+    io:format("~p~n~p~n~n", [Head#mod.name, Head#mod.app]),
+    loop_print_mod(Tail).
+
+
+
+
+
+
+
+
+
+
