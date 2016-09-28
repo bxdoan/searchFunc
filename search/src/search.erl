@@ -22,7 +22,7 @@
 -define(LISTS,"http://erlang.org/doc/man/lists.html").
 -define(DOC,"http://erlang.org/doc/").
 -define(MAN,"http://erlang.org/doc/man/").
-
+-define(TIMEOUT, 300000).
 %% -----------------------------------------------------------------------------
 %% Function
 %% -----------------------------------------------------------------------------
@@ -33,7 +33,7 @@ init() ->
     mnesia:create_table(app,
                         [{attributes, record_info(fields, app)}]),
     mnesia:create_table(mod,
-                        [{attributes, record_info(fields, mod)},{type, bag}]),
+                        [{attributes, record_info(fields, mod)},{type, set}]),
     mnesia:create_table(func,
                         [{attributes, record_info(fields, func)},{type, bag}]).
 
@@ -118,9 +118,9 @@ apps_mod()  ->
     Bd = get_body(?APPS),
     Parse_body = mochiweb_xpath:execute("/html/body/center/table/tr",
                                         Bd),
-    UrlAll = nonDuplicate_list(mochiweb_xpath:execute("/html/body/center/table/tr/td/table/tr/td/a/@href",Bd)),
+    %% UrlAll = nonDuplicate_list(mochiweb_xpath:execute("/html/body/center/table/tr/td/table/tr/td/a/@href",Bd)),
     Listapp = return_list_app(Parse_body),
-    Save = save_all_mod(Listapp,UrlAll),
+    Save = save_all_mod(Listapp),
     %% Listdesmod = return_list_des_mod(ModAll),
     io:format(Temp,"~p~n",[Save]),
     {ok,saved}.
@@ -137,14 +137,6 @@ return_list_des_mod([Name|Tail]) ->
 	    return_list_des_mod(Tail)
     end.
 
-doan()->
-    {ok, Temp} = file:open("data.txt",write), 
-    %% Bd = get_body(?DOC++"eldap.html"),
-    Bd2 = get_body("http://erlang.org/doc/man/eldap.html"),
-    D = mochiweb_xpath:execute("/html/body/div/div/div/div/p", Bd2),
-    M = element(3, lists:nth(1,D)),
-    io:format(Temp,"~p~n",[M]),
-    {ok,saved}.
 
 return_list_app([])->
     [];
@@ -152,7 +144,7 @@ return_list_app([Head|Tail]) ->
     case mochiweb_xpath:execute("/tr/@class", Head) of
         [<<"app">>] ->
             [Name,_] = return_value3(mochiweb_xpath:execute("/tr/td/table/tr/td/a", Head)),
-            [Name|return_list_app(Tail)];
+            [clean(Name)|return_list_app(Tail)];
         _ ->
             return_list_app(Tail)
     end.
@@ -160,18 +152,50 @@ return_list_app([Head|Tail]) ->
 %% -----------------------------------------------------------------------------
 %% SAVE MODULE FOR EACH APPLICATION
 %% -----------------------------------------------------------------------------
+%% save_all_mod([])->
+%%     ok;
+%% save_all_mod([App|Tail]) ->
+%%     spawn_workers(App),
+%%     save_all_mod(Tail).
+%%     %% [spawn_workers(App) || App <- Apps].
+%%     %% Results = wait_for_responses([]),
+%%     %% [App || App <- Apps, lists:member(App, Results) == false].
 
-save_all_mod([],_)->
+%% work(App) ->
+%%     Url = "apps/"++binary:bin_to_list(App)++"/index.html",
+%%     Bd = get_body(?DOC++Url),
+%%     Listmodule = mochiweb_xpath:execute("/html/body/div/div/div/ul/li/@title", Bd),
+%%     search:save_mod(Listmodule, App).
+%%     %% Master_ID ! {ok, App}.
+
+%% spawn_workers(App)->
+%%     %% Master_ID = self(),
+%%     spawn(search, work, [App]).
+
+
+%% wait_for_responses(State)->
+%%     receive
+%%         {ok,A} ->
+%%             NewState = add_state(State,{ok,A}),
+%%             wait_for_responses(NewState)
+%%     after 
+%%            30000 ->
+%%                State
+%%     end.
+%% add_state(State,A) ->
+%%     State++[A].
+
+save_all_mod([])->
     [];
-save_all_mod([Head|Tail], UrlAll) ->
-    Url = lookup_url(UrlAll, Head),
-    Bd = get_body(?DOC++binary:bin_to_list(Url)),
+save_all_mod([App|Tail]) ->
+    Url = "apps/"++binary:bin_to_list(App)++"/index.html",
+    Bd = get_body(?DOC++Url),
     Listmodule = mochiweb_xpath:execute("/html/body/div/div/div/ul/li/@title", Bd),
-    save_mod(Listmodule, Head),
-    [Listmodule|save_all_mod(Tail,UrlAll)].
+    spawn_workers(Listmodule, App),
+    save_all_mod(Tail).
     
-save_mod([],_)->
-    [];
+save_mod([],Name)->
+    {ok,inserted,Name};
 save_mod([Head|Tail],Name) ->
     Des = case binary:match(clean(Head), <<"App">>) of
     	      nomatch ->
@@ -185,7 +209,10 @@ save_mod([Head|Tail],Name) ->
                des = Des},
     insert(Mod),
     save_mod(Tail,Name).
+spawn_workers(Listmodule, App)->
+    spawn(search, save_mod, [Listmodule, App]).
 
+    
 %% -----------------------------------------------------------------------------
 %% SELECT MODULE
 %% -----------------------------------------------------------------------------
@@ -194,7 +221,7 @@ select_mod() ->
     {atomic, Row} = mnesia:transaction( 
                       fun() ->
                                  qlc:eval( qlc:q(
-                                             [ X || X <- mnesia:table(mod) ])) 
+                                             [ X || X <- mnesia:table(mod)])) 
                       end 
                      ),
     loop_print_mod(Row). 
@@ -206,14 +233,13 @@ select_mod(Arg) when is_atom(Arg) ->
             mnesia:read({mod, Name})
         end,
     {atomic, [Row]}=mnesia:transaction(Fun),
-    io:format(" ~s ~s ~n ~s ~n ",[Row#mod.name, Row#mod.app , Row#mod.des]).
+    io:format("Module:~s Application:~s ~n Description:~p ~n ",[Row#mod.name, Row#mod.app , Row#mod.des]).
 
 %% apps(Name, Module) ->
 %%     %% {ok, Temp} = file:open("data.txt",write), 
 %%     Bd = get_body(?APPS),    
 %%     UrlAll = nonDuplicate_list(mochiweb_xpath:execute("/html/body/center/table/tr/td/table/tr/td/a/@href",
 %%                                                Bd)),
-
 %%     Url = lookup_url(UrlAll, binary:list_to_bin(Name)),
 %%     Bd2 = get_body(?DOC++binary:bin_to_list(Url)),
 %%     Parse_body = mochiweb_xpath:execute("/html/body/div/div/div/ul/li",
@@ -492,13 +518,13 @@ clean(Arg)->
 loop_print_app([])->
     [];
 loop_print_app([Head|Tail]) ->
-    io:format("~s~n~s~n~n", [Head#app.name, Head#app.des]),
+    io:format("Application:~s~nDescription:~s~n~n", [Head#app.name, Head#app.des]),
     loop_print_app(Tail).
 
 loop_print_mod([])->
     [];
 loop_print_mod([Head|Tail]) ->
-    io:format("~s~n~s~n~n", [Head#mod.name, Head#mod.app]),
+    io:format("Module:~s Application:~s~n~n", [Head#mod.name, Head#mod.app]),
     loop_print_mod(Tail).
 
 select_search(Word) -> 
@@ -512,11 +538,4 @@ select_search(Word) ->
                         (string:str(F3, Word)>0)
                ])) 
     end ).
-
-
-
-
-
-
-
 
