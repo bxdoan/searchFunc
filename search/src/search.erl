@@ -30,12 +30,12 @@
 init() ->
     mnesia:create_schema([node()]),
     mnesia:start(),
-    mnesia:create_table(app,
-                        [{attributes, record_info(fields, app)}]),
+    %% mnesia:create_table(app,
+    %%                     [{attributes, record_info(fields, app)}]),
+    %% mnesia:create_table(func,
+    %%                     [{attributes, record_info(fields, func)},{type, bag}]),
     mnesia:create_table(mod,
-                        [{attributes, record_info(fields, mod)},{type, set}]),
-    mnesia:create_table(func,
-                        [{attributes, record_info(fields, func)},{type, bag}]).
+                        [{attributes, record_info(fields, mod)},{type, set}]).
 
 insert(Name) ->
     mnesia:transaction(fun() ->
@@ -101,17 +101,6 @@ select_app(Arg) when is_atom(Arg) ->
 %% SAVE MODULE
 %% -----------------------------------------------------------------------------
 
-%% apps(Name) ->   
-%%     {ok, Temp} = file:open("data.txt",write), 
-%%     Bd = get_body(?APPS),    
-%%     UrlAll = nonDuplicate_list(mochiweb_xpath:execute("/html/body/center/table/tr/td/table/tr/td/a/@href",
-%%                                                Bd)),
-%%     Url = lookup_url(UrlAll, binary:list_to_bin(Name)),
-%%     Bd2 = get_body(?DOC++binary:bin_to_list(Url)),
-%%     Parse_body = mochiweb_xpath:execute("/html/body/div/div/div/ul/li/@title",
-%%                                         mochiweb_html:parse(Bd2)),
-%%     io:format(Temp,"~p~n",[Parse_body]),
-%%     ok.
 
 apps_mod()  ->
     {ok, Temp} = file:open("data.txt",write), 
@@ -120,9 +109,9 @@ apps_mod()  ->
                                         Bd),
     %% UrlAll = nonDuplicate_list(mochiweb_xpath:execute("/html/body/center/table/tr/td/table/tr/td/a/@href",Bd)),
     Listapp = return_list_app(Parse_body),
-    Save = save_all_mod(Listapp),
+    Save = write_mod(Listapp),
     %% Listdesmod = return_list_des_mod(ModAll),
-    io:format(Temp,"~p~n",[Save]),
+    io:format(Temp,"~p~n~p~n~p~n",[Listapp, Save,length(Save)]),
     {ok,saved}.
 
 return_list_des_mod([])->
@@ -152,47 +141,57 @@ return_list_app([Head|Tail]) ->
 %% -----------------------------------------------------------------------------
 %% SAVE MODULE FOR EACH APPLICATION
 %% -----------------------------------------------------------------------------
-%% save_all_mod([])->
-%%     ok;
-%% save_all_mod([App|Tail]) ->
-%%     spawn_workers(App),
-%%     save_all_mod(Tail).
-%%     %% [spawn_workers(App) || App <- Apps].
-%%     %% Results = wait_for_responses([]),
-%%     %% [App || App <- Apps, lists:member(App, Results) == false].
+%% write_mod(Appcantsaved, 0)->
+%%     Appcantsaved;
+write_mod(Apps) ->
+    save_all_mod(Apps, 5),
+    Results = wait_for_responses([]),
+    Remain = [App || App <- Apps, lists:member(App, Results) == false],
+    io:format("~p~n",[Remain]),
+    write_mod(Remain).
 
-%% work(App) ->
-%%     Url = "apps/"++binary:bin_to_list(App)++"/index.html",
-%%     Bd = get_body(?DOC++Url),
-%%     Listmodule = mochiweb_xpath:execute("/html/body/div/div/div/ul/li/@title", Bd),
-%%     search:save_mod(Listmodule, App).
-%%     %% Master_ID ! {ok, App}.
+save_all_mod([],_)->
+    ok;
+save_all_mod([_App|Tail], 0) ->
+    receive
+    after 2000 ->
+            save_all_mod(Tail,5)
+    end;
+save_all_mod([App|Tail], N) ->
+    spawn_workers(App),
+    save_all_mod(Tail, N - 1).
 
-%% spawn_workers(App)->
-%%     %% Master_ID = self(),
-%%     spawn(search, work, [App]).
-
-
-%% wait_for_responses(State)->
-%%     receive
-%%         {ok,A} ->
-%%             NewState = add_state(State,{ok,A}),
-%%             wait_for_responses(NewState)
-%%     after 
-%%            30000 ->
-%%                State
-%%     end.
-%% add_state(State,A) ->
-%%     State++[A].
-
-save_all_mod([])->
-    [];
-save_all_mod([App|Tail]) ->
+work(App, Master) ->
     Url = "apps/"++binary:bin_to_list(App)++"/index.html",
     Bd = get_body(?DOC++Url),
     Listmodule = mochiweb_xpath:execute("/html/body/div/div/div/ul/li/@title", Bd),
-    spawn_workers(Listmodule, App),
-    save_all_mod(Tail).
+    save_mod(Listmodule, App),
+    Master ! {ok, App}.
+
+spawn_workers(App)->
+    spawn(search, work, [App, self()]).
+
+
+wait_for_responses(State)->
+    receive
+        {ok,A} ->
+            NewState = add_state(State,A),
+            wait_for_responses(NewState)
+    after 
+           300000 ->
+               State
+    end.
+add_state(State,A) ->
+    State++[A].
+ 
+%% save_all_mod([])->
+%%     [];
+%% save_all_mod([App|Tail]) ->
+%%     Url = "apps/"++binary:bin_to_list(App)++"/index.html",
+%%     Bd = get_body(?DOC++Url),
+%%     Listmodule = mochiweb_xpath:execute("/html/body/div/div/div/ul/li/@title", Bd),
+%%     spawn_workers(Listmodule, App),
+%%     save_all_mod(Tail).
     
 save_mod([],Name)->
     {ok,inserted,Name};
@@ -208,10 +207,7 @@ save_mod([Head|Tail],Name) ->
                name = clean_des(Head),
                des = Des},
     insert(Mod),
-    save_mod(Tail,Name).
-spawn_workers(Listmodule, App)->
-    spawn(search, save_mod, [Listmodule, App]).
-
+    [Mod|save_mod(Tail,Name)].
     
 %% -----------------------------------------------------------------------------
 %% SELECT MODULE
@@ -501,11 +497,13 @@ nonDuplicate_list(List) ->
 
 get_body(Url) ->
     Bd = case httpc:request(Url) of
-        {ok, {{_, 200, _}, _, Body}} ->
-            Body;
-        {error, Reason} ->
-            Reason
-    end,
+             {ok, {{_, 200, _}, _, Body}} ->
+                 %% io:format("Return ok."),
+                 Body;
+             {error, Reason} ->
+                 %% io:format("Return error."),
+                 Reason
+         end,
     mochiweb_html:parse(Bd).
 
 clean_des(Des) ->
