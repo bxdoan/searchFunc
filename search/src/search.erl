@@ -103,15 +103,15 @@ select_app(Arg) when is_atom(Arg) ->
 
 
 apps_mod()  ->
-    {ok, Temp} = file:open("data.txt",write), 
+    %% {ok, Temp} = file:open("data.txt",write), 
     Bd = get_body(?APPS),
     Parse_body = mochiweb_xpath:execute("/html/body/center/table/tr",
                                         Bd),
     %% UrlAll = nonDuplicate_list(mochiweb_xpath:execute("/html/body/center/table/tr/td/table/tr/td/a/@href",Bd)),
     Listapp = return_list_app(Parse_body),
-    Save = write_mod(Listapp),
+    write_mod(Listapp),
     %% Listdesmod = return_list_des_mod(ModAll),
-    io:format(Temp,"~p~n~p~n~p~n",[Listapp, Save,length(Save)]),
+    %% io:format(Temp,"~p~n~p~n~p~n",[Listapp, Save,length(Save)]),
     {ok,saved}.
 
 return_list_des_mod([])->
@@ -141,20 +141,18 @@ return_list_app([Head|Tail]) ->
 %% -----------------------------------------------------------------------------
 %% SAVE MODULE FOR EACH APPLICATION
 %% -----------------------------------------------------------------------------
-%% write_mod(Appcantsaved, 0)->
-%%     Appcantsaved;
+
 write_mod(Apps) ->
     save_all_mod(Apps, 5),
     Results = wait_for_responses([]),
     Remain = [App || App <- Apps, lists:member(App, Results) == false],
-    io:format("~p~n",[Remain]),
-    write_mod(Remain).
+    loop_print(Remain).
 
 save_all_mod([],_)->
     ok;
 save_all_mod([_App|Tail], 0) ->
     receive
-    after 2000 ->
+    after 1000 ->
             save_all_mod(Tail,5)
     end;
 save_all_mod([App|Tail], N) ->
@@ -199,7 +197,8 @@ save_mod([Head|Tail],Name) ->
     Des = case binary:match(clean(Head), <<"App">>) of
     	      nomatch ->
     		  Bd = get_body(?MAN++binary:bin_to_list(clean(Head))++".html"),
-    		  element(3, lists:nth(1,mochiweb_xpath:execute("/html/body/div/div/div/div/p", Bd)));
+    		  Des_raw = element(3, lists:nth(1,mochiweb_xpath:execute("/html/body/div/div/div/div/p", Bd))),
+                  des:parse(Des_raw);
     	      _ ->
     		  []
     	  end,
@@ -229,7 +228,7 @@ select_mod(Arg) when is_atom(Arg) ->
             mnesia:read({mod, Name})
         end,
     {atomic, [Row]}=mnesia:transaction(Fun),
-    io:format("Module:~s Application:~s ~n Description:~p ~n ",[Row#mod.name, Row#mod.app , Row#mod.des]).
+    io:format("Module: ~s Application: ~s ~nDescription:~n~s~n",[Row#mod.name, Row#mod.app , Row#mod.des]).
 
 %% apps(Name, Module) ->
 %%     %% {ok, Temp} = file:open("data.txt",write), 
@@ -498,10 +497,8 @@ nonDuplicate_list(List) ->
 get_body(Url) ->
     Bd = case httpc:request(Url) of
              {ok, {{_, 200, _}, _, Body}} ->
-                 %% io:format("Return ok."),
                  Body;
              {error, Reason} ->
-                 %% io:format("Return error."),
                  Reason
          end,
     mochiweb_html:parse(Bd).
@@ -512,6 +509,12 @@ clean_des(Des) ->
 clean(Arg)->    
     A = re:replace(Arg, "(^\\s+)|(\\s+$)", "", [global,{return,binary}]),
     re:replace(A, "\n", "\\ ", [global,{return,binary}]).
+
+loop_print([])->
+    ok;
+loop_print([Head|Tail]) ->
+    io:format("~s~n", [Head]),
+    loop_print(Tail).
 
 loop_print_app([])->
     [];
